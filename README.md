@@ -23,20 +23,37 @@ Each reviewer judged all 58 cases 3 times.
 | | Jev | Claude Opus | Claude Sonnet |
 |---|---|---|---|
 | correct attempts | 159 / 174 | 174 / 174 | 174 / 174 |
-| precision | 0.96 | 1.00 | 1.00 |
-| recall | 0.90 | 1.00 | 1.00 |
-| F1 | 0.93 | 1.00 | 1.00 |
-| F1 on the holdout | 0.93 | 1.00 | 1.00 |
-| median time per call | 0.3 s | 14.6 s | 11.8 s |
+| bugs caught | 27 / 30 | 30 / 30 | 30 / 30 |
+| false alarms | 1 / 28 | 0 / 28 | 0 / 28 |
+| precision | 96% | 100% | 100% |
+| recall | 90% | 100% | 100% |
+| balanced score (F1) | 93% | 100% | 100% |
+| balanced score on the unseen cases | 93% | 100% | 100% |
+| typical time per call | 0.3 s | 14.6 s | 11.8 s |
 | cost of all 174 calls | $0.03 | $14.95 | $7.56 |
 
+What the rows mean:
+
+- **Correct attempts:** each reviewer judged all 58 cases 3 times, so 174 judgments in total.
+- **Bugs caught:** of the 30 cases that really have an N+1, how many the reviewer flagged.
+- **False alarms:** of the 28 cases with no N+1, how many the reviewer wrongly flagged.
+- **Precision:** when the reviewer says "bug", how often it is right.
+- **Recall:** of all the real bugs, how many the reviewer found.
+- **Balanced score (F1):** one number that is high only when both precision and recall are high.
+- **Unseen cases:** the 16 [holdout](#holdout) cases, kept out of prompt tuning. A similar score here means the
+  reviewer wasn't just tuned to the other cases.
+- **Typical time per call:** the median.
+- **Cutoff:** a case counts as flagged when the average of its 3 attempts is 0.5 or more, where "no bug" scores 0
+  and "bug" scores 1.
+
+Findings:
+
 - **Claude** got every case right on every attempt, with both models.
-- **Jev** is about 40× faster and 250–500× cheaper. It misses some FK chains that are only partly loaded, and
-  it gives a false alarm when an FK is loaded with `prefetch_related` instead of `select_related`.
-- **Scoring:** precision, recall and F1 count a case as flagged when the mean of its 3 attempts is 0.5 or more.
+- **Jev** is about 40× faster and 250–500× cheaper. It misses some foreign-key chains that are only partly loaded,
+  and it gives a false alarm when a foreign key is loaded with `prefetch_related` instead of `select_related`.
 - **Jev variant:** Jev is shown with its best setup. It is asked one question per serializer field, and its prompt
   includes the loading plan that the harness reads from Django's query object (`jev_resolved_choice`). The five
-  other Jev setups score between 0.67 and 0.90 F1.
+  other Jev setups have balanced scores between 67% and 90%.
 - **Caveat:** the skill's examples use the same library models as the test cases, which probably makes the cases
   easier for Claude than they'd be in an unfamiliar codebase.
 

@@ -52,13 +52,16 @@ What the rows mean:
 Findings:
 
 - **Claude** got every case right on every attempt, with both models.
-- **Jev** also got every case right on every attempt, and is about 40× faster and 250–500× cheaper. Its closest
-  calls are re-queries of a prefetched relation (`first()`, `filter()`, `order_by()`), which score 0.55–0.7.
+- **Jev** also got every case right on every attempt, and is about 38–47× faster and 220–440× cheaper. Its closest
+  calls, which score 0.55–0.7, are re-queries of a prefetched relation (`first()`, `filter()`, `order_by()`) and a
+  partly loaded chain (`book_shorten_publisher_select`).
 - **Jev setup:** Jev is asked one false / maybe / true question per serializer field. Its prompt includes the loading
   plan that the harness reads from Django's query object, with three derived facts: every relation each output key
   walks through (`relations_traversed`), every relation the plan keeps in memory, including the parents of a nested
-  prefetch (`loaded_relations`), and the columns `only()` leaves out (`deferred_columns`). Without these facts Jev
-  matched `author.publisher` against a loaded `author` and missed partly loaded chains (F1 93–95%).
+  prefetch (`loaded_relations`), and the columns `only()` or `defer()` leaves out (`deferred_columns`). It is also
+  told to check every hop against `loaded_relations`. Without these facts Jev matched `author.publisher` against a
+  loaded `author` and missed partly loaded chains (F1 95%). With `relations_traversed` but without the instruction to
+  check each hop, F1 was 93%.
 - **Caveat:** the skill's examples use the same library models as the test cases, which probably makes the cases
   easier for Claude than they'd be in an unfamiliar codebase.
 

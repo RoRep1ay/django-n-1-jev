@@ -1,0 +1,408 @@
+[
+  {
+    "id": "loan_base",
+    "split": "dev",
+    "base": "loan",
+    "category": "control",
+    "intended": false
+  },
+  {
+    "id": "loan_drop_member_select",
+    "split": "dev",
+    "base": "loan",
+    "category": "fk-nested",
+    "intended": true
+  },
+  {
+    "id": "loan_shorten_author_select",
+    "split": "dev",
+    "base": "loan",
+    "category": "fk-deep-source",
+    "intended": true
+  },
+  {
+    "id": "loan_drop_branch_select",
+    "split": "dev",
+    "base": "loan",
+    "category": "fk-source",
+    "intended": true
+  },
+  {
+    "id": "loan_drop_labels_prefetch",
+    "split": "dev",
+    "base": "loan",
+    "category": "m2m",
+    "intended": true
+  },
+  {
+    "id": "loan_add_series_source",
+    "split": "dev",
+    "base": "loan",
+    "category": "fk-deep-source",
+    "intended": true
+  },
+  {
+    "id": "loan_add_book_id",
+    "split": "dev",
+    "base": "loan",
+    "category": "fk-id-safe",
+    "intended": false
+  },
+  {
+    "id": "loan_add_pure_property",
+    "split": "dev",
+    "base": "loan",
+    "category": "property-safe",
+    "intended": false
+  },
+  {
+    "id": "loan_add_aggregate_property",
+    "split": "dev",
+    "base": "loan",
+    "category": "property-query",
+    "intended": true
+  },
+  {
+    "id": "loan_aggregate_property_with_prefetch",
+    "split": "dev",
+    "base": "loan",
+    "category": "property-query",
+    "intended": true
+  },
+  {
+    "id": "loan_service_all_with_prefetch",
+    "split": "dev",
+    "base": "loan",
+    "category": "service-safe",
+    "intended": false
+  },
+  {
+    "id": "loan_service_all_without_prefetch",
+    "split": "dev",
+    "base": "loan",
+    "category": "service-query",
+    "intended": true
+  },
+  {
+    "id": "loan_service_bypasses_prefetch",
+    "split": "dev",
+    "base": "loan",
+    "category": "service-query",
+    "intended": true
+  },
+  {
+    "id": "loan_service_pure",
+    "split": "dev",
+    "base": "loan",
+    "category": "service-safe",
+    "intended": false
+  },
+  {
+    "id": "loan_count_with_prefetch",
+    "split": "dev",
+    "base": "loan",
+    "category": "method-safe",
+    "intended": false
+  },
+  {
+    "id": "loan_count_without_prefetch",
+    "split": "dev",
+    "base": "loan",
+    "category": "method-query",
+    "intended": true
+  },
+  {
+    "id": "loan_exists_with_prefetch",
+    "split": "dev",
+    "base": "loan",
+    "category": "method-safe",
+    "intended": false
+  },
+  {
+    "id": "loan_filter_after_prefetch",
+    "split": "dev",
+    "base": "loan",
+    "category": "filter-after-prefetch",
+    "intended": true
+  },
+  {
+    "id": "loan_filtered_prefetch_to_attr",
+    "split": "dev",
+    "base": "loan",
+    "category": "filter-after-prefetch-safe",
+    "intended": false
+  },
+  {
+    "id": "loan_to_attr_mismatch",
+    "split": "dev",
+    "base": "loan",
+    "category": "to-attr-mismatch",
+    "intended": true
+  },
+  {
+    "id": "loan_count_annotated",
+    "split": "dev",
+    "base": "loan",
+    "category": "annotate-safe",
+    "intended": false
+  },
+  {
+    "id": "loan_extra_select",
+    "split": "dev",
+    "base": "loan",
+    "category": "control",
+    "intended": false
+  },
+  {
+    "id": "loan_prefetch_fk_instead_of_select",
+    "split": "dev",
+    "base": "loan",
+    "category": "prefetch-fk-safe",
+    "intended": false
+  },
+  {
+    "id": "loan_get_queryset_keeps_class_attr",
+    "split": "dev",
+    "base": "loan",
+    "category": "queryset-inheritance-safe",
+    "intended": false
+  },
+  {
+    "id": "loan_get_queryset_ignores_class_attr",
+    "split": "dev",
+    "base": "loan",
+    "category": "queryset-inheritance",
+    "intended": true
+  },
+  {
+    "id": "book_base",
+    "split": "dev",
+    "base": "book",
+    "category": "control",
+    "intended": false
+  },
+  {
+    "id": "book_shorten_publisher_select",
+    "split": "dev",
+    "base": "book",
+    "category": "fk-nested-deep",
+    "intended": true
+  },
+  {
+    "id": "book_drop_series_select",
+    "split": "dev",
+    "base": "book",
+    "category": "fk-source",
+    "intended": true
+  },
+  {
+    "id": "book_property_instead_of_annotation",
+    "split": "dev",
+    "base": "book",
+    "category": "property-query",
+    "intended": true
+  },
+  {
+    "id": "book_filtered_annotation",
+    "split": "dev",
+    "base": "book",
+    "category": "annotate-safe",
+    "intended": false
+  },
+  {
+    "id": "book_nested_reverse_without_prefetch",
+    "split": "dev",
+    "base": "book",
+    "category": "reverse-nested",
+    "intended": true
+  },
+  {
+    "id": "book_nested_reverse_with_prefetch",
+    "split": "dev",
+    "base": "book",
+    "category": "reverse-nested-safe",
+    "intended": false
+  },
+  {
+    "id": "book_nested_reverse_prefetch_missing_child_fk",
+    "split": "dev",
+    "base": "book",
+    "category": "reverse-nested-child-fk",
+    "intended": true
+  },
+  {
+    "id": "book_nested_reverse_prefetch_with_child_select",
+    "split": "dev",
+    "base": "book",
+    "category": "reverse-nested-child-fk-safe",
+    "intended": false
+  },
+  {
+    "id": "author_base",
+    "split": "dev",
+    "base": "author",
+    "category": "control",
+    "intended": false
+  },
+  {
+    "id": "author_drop_books_prefetch",
+    "split": "dev",
+    "base": "author",
+    "category": "method-query",
+    "intended": true
+  },
+  {
+    "id": "author_drop_series_prefetch",
+    "split": "dev",
+    "base": "author",
+    "category": "reverse-nested",
+    "intended": true
+  },
+  {
+    "id": "author_count_with_prefetch",
+    "split": "dev",
+    "base": "author",
+    "category": "method-safe",
+    "intended": false
+  },
+  {
+    "id": "author_order_by_after_prefetch",
+    "split": "dev",
+    "base": "author",
+    "category": "filter-after-prefetch",
+    "intended": true
+  },
+  {
+    "id": "author_sorted_in_python",
+    "split": "dev",
+    "base": "author",
+    "category": "filter-after-prefetch-safe",
+    "intended": false
+  },
+  {
+    "id": "author_nested_book_series_missing",
+    "split": "dev",
+    "base": "author",
+    "category": "reverse-nested-child-fk",
+    "intended": true
+  },
+  {
+    "id": "author_nested_book_series_prefetched",
+    "split": "dev",
+    "base": "author",
+    "category": "reverse-nested-child-fk-safe",
+    "intended": false
+  },
+  {
+    "id": "ho_method_fk_chain_unloaded",
+    "split": "holdout",
+    "base": "loan",
+    "category": "method-fk-chain",
+    "intended": true
+  },
+  {
+    "id": "ho_method_fk_chain_loaded",
+    "split": "holdout",
+    "base": "loan",
+    "category": "method-fk-chain-safe",
+    "intended": false
+  },
+  {
+    "id": "ho_to_representation_unloaded",
+    "split": "holdout",
+    "base": "loan",
+    "category": "to-representation",
+    "intended": true
+  },
+  {
+    "id": "ho_to_representation_loaded",
+    "split": "holdout",
+    "base": "loan",
+    "category": "to-representation-safe",
+    "intended": false
+  },
+  {
+    "id": "ho_string_related_unloaded",
+    "split": "holdout",
+    "base": "loan",
+    "category": "related-field",
+    "intended": true
+  },
+  {
+    "id": "ho_pk_related_many_unprefetched",
+    "split": "holdout",
+    "base": "loan",
+    "category": "m2m",
+    "intended": true
+  },
+  {
+    "id": "ho_only_defers_rendered_field",
+    "split": "holdout",
+    "base": "loan",
+    "category": "deferred-field",
+    "intended": true
+  },
+  {
+    "id": "ho_only_keeps_rendered_fields",
+    "split": "holdout",
+    "base": "loan",
+    "category": "deferred-field-safe",
+    "intended": false
+  },
+  {
+    "id": "ho_filtered_prefetch_no_to_attr",
+    "split": "holdout",
+    "base": "loan",
+    "category": "filtered-prefetch-safe",
+    "intended": false
+  },
+  {
+    "id": "ho_reverse_count_through_fk",
+    "split": "holdout",
+    "base": "loan",
+    "category": "method-reverse-through-fk",
+    "intended": true
+  },
+  {
+    "id": "ho_context_precomputed",
+    "split": "holdout",
+    "base": "loan",
+    "category": "context-bulk-safe",
+    "intended": false
+  },
+  {
+    "id": "ho_first_on_prefetched",
+    "split": "holdout",
+    "base": "loan",
+    "category": "method-query",
+    "intended": true
+  },
+  {
+    "id": "ho_slice_prefetched",
+    "split": "holdout",
+    "base": "loan",
+    "category": "method-safe",
+    "intended": false
+  },
+  {
+    "id": "ho_fk_id_through_loaded_fk",
+    "split": "holdout",
+    "base": "book",
+    "category": "fk-id-safe",
+    "intended": false
+  },
+  {
+    "id": "ho_two_level_reverse_unprefetched",
+    "split": "holdout",
+    "base": "author",
+    "category": "reverse-two-level",
+    "intended": true
+  },
+  {
+    "id": "ho_two_level_reverse_prefetched",
+    "split": "holdout",
+    "base": "author",
+    "category": "reverse-two-level-safe",
+    "intended": false
+  }
+]

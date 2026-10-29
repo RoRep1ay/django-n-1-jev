@@ -1,8 +1,8 @@
 """Three-state verdict shared by every contender: is serving the endpoint N+1 — false, maybe or true.
 
 Each verdict also has a score (false 0, maybe 0.5, true 1) so the probability-based metrics (thresholds, AUC) still
-apply: a contender's probability is its expected score. A yes/no probability (Jev's Noul) gets its verdict from the
-bands below; the skill's marks and Jev's Choice name a verdict directly.
+apply: a contender's probability is its expected score. The skill's marks and Jev's Choice name a verdict directly;
+an expected score averaged over repeated calls (the CI check) gets its verdict from the bands below.
 """
 from collections.abc import Iterable
 from enum import Enum

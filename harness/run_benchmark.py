@@ -1,6 +1,6 @@
 """Score every contender against the oracle labels.
 
-    python -m harness.run_benchmark                 # n+1-audit skill on each SKILL_MODELS + every JEV_VARIANTS
+    python -m harness.run_benchmark                 # n+1-audit skill on each SKILL_MODELS + Jev
     python -m harness.run_benchmark --skip-jev      # skill only
     python -m harness.run_benchmark --skip-skill    # Jev only
     python -m harness.run_benchmark --repeat 3      # repeat every call to measure answer stability
@@ -21,8 +21,8 @@ from harness.verdict import Verdict
 
 THRESHOLDS = (0.3, 0.5, 0.7)
 SKILL_MODELS = {'skill_opus': 'claude-opus-5-5', 'skill_sonnet': 'claude-sonnet-5-5'}
-JEV_VARIANTS = {f'jev_{scope}_{kind}': (scope, kind) for kind in ('noul', 'choice') for scope in ('whole', 'fields', 'resolved')}
-NAME_WIDTH = max(len(name) for name in [*SKILL_MODELS, *JEV_VARIANTS])
+JEV = 'jev'
+NAME_WIDTH = max(len(name) for name in [*SKILL_MODELS, JEV])
 
 
 def get_confusion(rows: list[dict], key: str, threshold: float = 0.5) -> dict[str, float]:
@@ -70,23 +70,20 @@ def run_skill(labels: list[dict], repeat: int, workers: int) -> None:
 def run_jev(labels: list[dict], repeat: int, workers: int) -> None:
     from typesafe_sdk import TypeSafeClient
 
-    from harness.jev_check import USD_PER_INPUT_TOKEN, check_fields, check_resolved, check_whole, load_api_key
+    from harness.jev_check import USD_PER_INPUT_TOKEN, check_resolved, load_api_key
 
     with TypeSafeClient(api_key=load_api_key()) as client:
-        for variant, (scope, kind) in JEV_VARIANTS.items():
-            jev_check = {'whole': check_whole, 'fields': check_fields, 'resolved': check_resolved}[scope]
+        def check(case_id: str) -> dict:
+            result = check_resolved(client, case_id)
+            return {'probability': result.probability, 'verdict': result.verdict.value,
+                    'fields': result.field_probabilities,
+                    'field_verdicts': {name: v.value for name, v in result.field_verdicts.items()},
+                    'verdict_probabilities': {name: {v.value: p for v, p in choices.items()}
+                                              for name, choices in result.verdict_probabilities.items()},
+                    'latency_s': result.latency_seconds, 'input_tokens': result.input_tokens,
+                    'usd': result.input_tokens * USD_PER_INPUT_TOKEN}
 
-            def check(case_id: str) -> dict:
-                result = jev_check(client, case_id, kind)
-                return {'probability': result.probability, 'verdict': result.verdict.value,
-                        'fields': result.field_probabilities,
-                        'field_verdicts': {name: v.value for name, v in result.field_verdicts.items()},
-                        'verdict_probabilities': {name: {v.value: p for v, p in choices.items()}
-                                                  for name, choices in result.verdict_probabilities.items()},
-                        'latency_s': result.latency_seconds, 'input_tokens': result.input_tokens,
-                        'usd': result.input_tokens * USD_PER_INPUT_TOKEN}
-
-            record_runs(labels, variant, repeat, workers, check)
+        record_runs(labels, JEV, repeat, workers, check)
 
 
 def build_report(labels: list[dict], contenders: list[str]) -> str:
@@ -151,7 +148,7 @@ def main() -> None:
         contenders += list(SKILL_MODELS)
     if not args.skip_jev:
         run_jev(labels, args.repeat, args.workers)
-        contenders += list(JEV_VARIANTS)
+        contenders.append(JEV)
 
     run_name = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%SZ') + (f'-{args.label}' if args.label else '')
     run_dir = ROOT / 'results' / 'runs' / run_name

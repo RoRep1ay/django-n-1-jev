@@ -11,7 +11,9 @@ reviewers are scored against them:
 Neither reviewer can run the code. Ground truth is **measured**: each endpoint is served with 5 and then 10 units of
 seed data, and if the SQL query count grows, the endpoint has an N+1.
 
-> A demo showcase: the domain is made up, and the code is written to be benchmarked, not reused.
+> A demo showcase: the domain is made up, and the code is written to be benchmarked, not reused. It is tested on a
+> small domain, not on a full production application, so results may differ from project to project. The goal is to
+> demo a use case and inspire ideas, such as running a check like this as part of a CI workflow.
 
 **Domain:** a small library app. Publishers have authors, authors write books (grouped into series), members borrow
 books as loans from a branch, and loans can carry labels and fines.
@@ -22,13 +24,13 @@ Each reviewer judged all 58 cases 3 times.
 
 | | Jev | Claude Opus | Claude Sonnet |
 |---|---|---|---|
-| correct attempts | 159 / 174 | 174 / 174 | 174 / 174 |
-| bugs caught | 27 / 30 | 30 / 30 | 30 / 30 |
-| false alarms | 1 / 28 | 0 / 28 | 0 / 28 |
-| precision | 96% | 100% | 100% |
-| recall | 90% | 100% | 100% |
-| balanced score (F1) | 93% | 100% | 100% |
-| balanced score on the unseen cases | 93% | 100% | 100% |
+| correct attempts | 174 / 174 | 174 / 174 | 174 / 174 |
+| bugs caught | 30 / 30 | 30 / 30 | 30 / 30 |
+| false alarms | 0 / 28 | 0 / 28 | 0 / 28 |
+| precision | 100% | 100% | 100% |
+| recall | 100% | 100% | 100% |
+| balanced score (F1) | 100% | 100% | 100% |
+| balanced score on the unseen cases | 100%* | 100% | 100% |
 | typical time per call | 0.3 s | 14.6 s | 11.8 s |
 | cost of all 174 calls | $0.03 | $14.95 | $7.56 |
 
@@ -41,7 +43,8 @@ What the rows mean:
 - **Recall:** of all the real bugs, how many the reviewer found.
 - **Balanced score (F1):** one number that is high only when both precision and recall are high.
 - **Unseen cases:** the 16 [holdout](#holdout) cases, kept out of prompt tuning. A similar score here means the
-  reviewer wasn't just tuned to the other cases.
+  reviewer wasn't just tuned to the other cases. *Jev's `deferred_columns` fact was added after looking at a holdout
+  miss, so Jev's holdout score is no longer a clean unseen score.
 - **Typical time per call:** the median.
 - **Cutoff:** a case counts as flagged when the average of its 3 attempts is 0.5 or more, where "no bug" scores 0
   and "bug" scores 1.
@@ -49,15 +52,17 @@ What the rows mean:
 Findings:
 
 - **Claude** got every case right on every attempt, with both models.
-- **Jev** is about 40× faster and 250–500× cheaper. It misses some foreign-key chains that are only partly loaded,
-  and it gives a false alarm when a foreign key is loaded with `prefetch_related` instead of `select_related`.
-- **Jev variant:** Jev is shown with its best setup. It is asked one question per serializer field, and its prompt
-  includes the loading plan that the harness reads from Django's query object (`jev_resolved_choice`). The five
-  other Jev setups have balanced scores between 67% and 90%.
+- **Jev** also got every case right on every attempt, and is about 40× faster and 250–500× cheaper. Its closest
+  calls are re-queries of a prefetched relation (`first()`, `filter()`, `order_by()`), which score 0.55–0.7.
+- **Jev setup:** Jev is asked one false / maybe / true question per serializer field. Its prompt includes the loading
+  plan that the harness reads from Django's query object, with three derived facts: every relation each output key
+  walks through (`relations_traversed`), every relation the plan keeps in memory, including the parents of a nested
+  prefetch (`loaded_relations`), and the columns `only()` leaves out (`deferred_columns`). Without these facts Jev
+  matched `author.publisher` against a loaded `author` and missed partly loaded chains (F1 93–95%).
 - **Caveat:** the skill's examples use the same library models as the test cases, which probably makes the cases
   easier for Claude than they'd be in an unfamiliar codebase.
 
-The full reports, including every Jev variant, are produced by `python -m harness.run_benchmark` (see
+The full reports, with every threshold and per-field scores, are produced by `python -m harness.run_benchmark` (see
 [Run it](#run-it)).
 
 ## The tests
@@ -76,7 +81,7 @@ The base endpoint returns each loan with its book title, author, branch, member 
 |---|---|---|---|---|---|
 | `loan_base` | the correct endpoint | 2 → 2 | | ✅ | ✅ |
 | `loan_drop_member_select` | drop `member` from `select_related` | 12 → 22 | ✔ | ✅ | ✅ |
-| `loan_shorten_author_select` | `select_related('book__author')` becomes `('book')` | 12 → 22 | ✔ | 2/3 | ✅ |
+| `loan_shorten_author_select` | `select_related('book__author')` becomes `('book')` | 12 → 22 | ✔ | ✅ | ✅ |
 | `loan_drop_branch_select` | drop `branch` from `select_related` | 12 → 22 | ✔ | ✅ | ✅ |
 | `loan_drop_labels_prefetch` | drop `prefetch_related('labels')` | 11 → 21 | ✔ | ✅ | ✅ |
 | `loan_add_series_source` | add a field with `source='book.series.name'` | 12 → 22 | ✔ | ✅ | ✅ |
@@ -96,7 +101,7 @@ The base endpoint returns each loan with its book title, author, branch, member 
 | `loan_to_attr_mismatch` | the same `Prefetch`, but the field reads `fines.all()` | 13 → 23 | ✔ | ✅ | ✅ |
 | `loan_count_annotated` | the fine count comes from `annotate(Count(...))` | 2 → 2 | | ✅ | ✅ |
 | `loan_extra_select` | an extra, unused `select_related` | 2 → 2 | | ✅ | ✅ |
-| `loan_prefetch_fk_instead_of_select` | an FK chain loaded with `prefetch_related` instead | 4 → 4 | | ❌ | ✅ |
+| `loan_prefetch_fk_instead_of_select` | an FK chain loaded with `prefetch_related` instead | 4 → 4 | | ✅ | ✅ |
 | `loan_get_queryset_keeps_class_attr` | `get_queryset` builds on `super()` | 2 → 2 | | ✅ | ✅ |
 | `loan_get_queryset_ignores_class_attr` | `get_queryset` ignores the eager-loaded class `queryset` | 51 → 101 | ✔ | ✅ | ✅ |
 
@@ -108,13 +113,13 @@ loan count.
 | case | change | queries | N+1 | Jev | Claude |
 |---|---|---|---|---|---|
 | `book_base` | the correct endpoint | 1 → 1 | | ✅ | ✅ |
-| `book_shorten_publisher_select` | `select_related('author__publisher')` becomes `('author')` | 11 → 21 | ✔ | ❌ | ✅ |
+| `book_shorten_publisher_select` | `select_related('author__publisher')` becomes `('author')` | 11 → 21 | ✔ | ✅ | ✅ |
 | `book_drop_series_select` | drop `series` from `select_related` | 11 → 21 | ✔ | ✅ | ✅ |
 | `book_property_instead_of_annotation` | a field reads the `open_loan_count` property | 11 → 21 | ✔ | ✅ | ✅ |
 | `book_filtered_annotation` | the same count as a filtered `Count` annotation | 1 → 1 | | ✅ | ✅ |
 | `book_nested_reverse_without_prefetch` | nest the book's `loans` without a prefetch | 11 → 21 | ✔ | ✅ | ✅ |
 | `book_nested_reverse_with_prefetch` | nest `loans` with `prefetch_related('loans')` | 2 → 2 | | ✅ | ✅ |
-| `book_nested_reverse_prefetch_missing_child_fk` | loans are prefetched, but each loan reads `member.name` | 12 → 22 | ✔ | 2/3 | ✅ |
+| `book_nested_reverse_prefetch_missing_child_fk` | loans are prefetched, but each loan reads `member.name` | 12 → 22 | ✔ | ✅ | ✅ |
 | `book_nested_reverse_prefetch_with_child_select` | the prefetch adds `select_related('member')` | 2 → 2 | | ✅ | ✅ |
 
 ### Author endpoint
@@ -129,7 +134,7 @@ The base endpoint returns each author with nested series and a book count.
 | `author_count_with_prefetch` | `books.count()` on prefetched books | 3 → 3 | | ✅ | ✅ |
 | `author_order_by_after_prefetch` | `books.order_by('title')` after prefetching books | 8 → 13 | ✔ | ✅ | ✅ |
 | `author_sorted_in_python` | `sorted(...)` over `books.all()` | 3 → 3 | | ✅ | ✅ |
-| `author_nested_book_series_missing` | read `book.series.name` for each prefetched book | 13 → 23 | ✔ | ❌ | ✅ |
+| `author_nested_book_series_missing` | read `book.series.name` for each prefetched book | 13 → 23 | ✔ | ✅ | ✅ |
 | `author_nested_book_series_prefetched` | the same, with `books__series` prefetched | 4 → 4 | | ✅ | ✅ |
 
 ### Holdout
@@ -144,8 +149,8 @@ These 16 cases use the same endpoints, but reviewers must not be tuned against t
 | `ho_to_representation_loaded` | loan | `to_representation` adds `book.author.country` | 2 → 2 | | ✅ | ✅ |
 | `ho_string_related_unloaded` | loan | `StringRelatedField(source='book.series')` | 12 → 22 | ✔ | ✅ | ✅ |
 | `ho_pk_related_many_unprefetched` | loan | `PrimaryKeyRelatedField(many=True)` on labels, with no prefetch | 11 → 21 | ✔ | ✅ | ✅ |
-| `ho_only_defers_rendered_field` | loan | `.only()` leaves out `due_on`, which is rendered | 12 → 22 | ✔ | 1/3 | ✅ |
-| `ho_only_keeps_rendered_fields` | loan | `.only()` keeps every rendered field | 2 → 2 | | 1/3 | ✅ |
+| `ho_only_defers_rendered_field` | loan | `.only()` leaves out `due_on`, which is rendered | 12 → 22 | ✔ | ✅ | ✅ |
+| `ho_only_keeps_rendered_fields` | loan | `.only()` keeps every rendered field | 2 → 2 | | ✅ | ✅ |
 | `ho_filtered_prefetch_no_to_attr` | loan | a filtered `Prefetch` on labels without `to_attr` | 2 → 2 | | ✅ | ✅ |
 | `ho_reverse_count_through_fk` | loan | `obj.book.loans.count()` | 12 → 22 | ✔ | ✅ | ✅ |
 | `ho_context_precomputed` | loan | fines are totalled once in the serializer context | 3 → 3 | | ✅ | ✅ |

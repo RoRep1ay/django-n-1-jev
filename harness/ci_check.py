@@ -10,7 +10,7 @@ Endpoints come from the URLconf: every DRF view with a list action. An endpoint 
 serializer classes (nested serializers and project base classes included), the models along its read and prefetch
 paths, and the project modules its view and serializer methods reference. It is affected when one of those files
 changed, and Jev sees those files in full plus the resolved loading plan, so a serializer-only change still puts the
-unchanged queryset in context. Each endpoint is asked the jev_resolved_noul questions, averaged over --repeat calls.
+unchanged queryset in context. Each endpoint is asked the benchmark's Jev questions, averaged over --repeat calls.
 
 The base revision is scored in a throwaway `git archive` snapshot with this harness copied over it, so the base needs
 no copy of the check.
@@ -35,7 +35,6 @@ import django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'bench.settings')
 django.setup()
 
-from django.core.exceptions import FieldDoesNotExist  # noqa: E402
 from django.db.models import Model, QuerySet  # noqa: E402
 from django.http import HttpResponseBase  # noqa: E402
 from django.urls import URLPattern, URLResolver, get_resolver  # noqa: E402
@@ -43,10 +42,11 @@ from rest_framework import serializers  # noqa: E402
 from rest_framework.generics import GenericAPIView  # noqa: E402
 from rest_framework.mixins import ListModelMixin  # noqa: E402
 from rest_framework.test import APIRequestFactory  # noqa: E402
-from typesafe_sdk import Noul, TypeSafeClient  # noqa: E402
+from typesafe_sdk import Choice, TypeSafeClient  # noqa: E402
 
 from harness.jev_check import (  # noqa: E402
-    ask, build_field_facts, build_queryset_facts, build_resolved_facts, build_resolved_questions, load_api_key,
+    ask, build_field_facts, build_queryset_facts, build_resolved_facts, build_resolved_questions, get_relation_hops,
+    load_api_key,
 )
 from harness.verdict import MAYBE_FROM, SCORE, Verdict, get_verdict  # noqa: E402
 
@@ -64,7 +64,7 @@ class Endpoint:
     route: str
     files: list[str]
     state: str
-    questions: dict[str, Noul]
+    questions: dict[str, Choice]
 
 
 @dataclass
@@ -136,17 +136,7 @@ def get_serializers(serializer: serializers.Serializer) -> Iterator[serializers.
 
 
 def get_models_on_path(model: type[Model], path: str) -> list[type[Model]]:
-    models = []
-    for name in path.replace('[]', '').split('.'):
-        try:
-            field = model._meta.get_field(name)
-        except FieldDoesNotExist:  # a property, annotation or method: there is no relation to follow
-            break
-        if not field.is_relation:
-            break
-        model = field.related_model
-        models.append(model)
-    return models
+    return [related_model for _, related_model in get_relation_hops(model, path)]
 
 
 def get_referenced_objects(classes: Iterable[type]) -> Iterator[object]:
@@ -164,7 +154,7 @@ def get_dependency_files(view: GenericAPIView, queryset: QuerySet, serializer: s
     project_classes = [cls for cls in serializer_classes + view_classes if get_project_file(cls)]
 
     queryset_facts = build_queryset_facts(queryset)
-    paths = [fact.reads for fact in build_field_facts(serializer)] + queryset_facts.select_related
+    paths = [fact.reads for fact in build_field_facts(queryset.model, serializer)] + queryset_facts.select_related
     paths += [path for fact in queryset_facts.prefetch_related for path in (fact.path, *fact.select_related)]
     models = [queryset.model, *(model for path in paths for model in get_models_on_path(queryset.model, path))]
 
@@ -183,7 +173,7 @@ def build_endpoint(route: str, callback: ViewFunction) -> Endpoint:
     sections = [f'# ===== file: {path} =====\n{(ROOT / path).read_text()}' for path in files]
     sections.append(build_resolved_facts(queryset, serializer, view_name, get_project_file(type(view))))
     return Endpoint(id=get_view_id(type(view)), route=f'/{route}', files=files, state='\n\n'.join(sections),
-                    questions=build_resolved_questions(view_name, serializer, 'noul'))
+                    questions=build_resolved_questions(view_name, serializer))
 
 
 def discover_endpoints() -> tuple[list[Endpoint], list[SkippedEndpoint]]:

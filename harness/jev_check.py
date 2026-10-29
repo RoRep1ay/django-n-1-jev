@@ -1,10 +1,6 @@
-"""Jev contenders: one question per endpoint ("whole"), one per top-level serializer field ("fields"), or one per
-top-level field with the effective queryset and serializer read paths worked out in advance ("resolved").
-
-Each scope is asked two ways:
-- noul: a yes/no Noul; its probability falls into a verdict band (harness/verdict.py).
-- choice: a Choice between false / maybe / true; Jev names the verdict.
-Either way the probability is the expected verdict score over Jev's answer probabilities.
+"""Jev contender: one Choice (false / maybe / true) per top-level serializer field, with the effective queryset and
+serializer read paths worked out in advance and added to the state. A field's probability is the expected verdict
+score over Jev's answer probabilities.
 """
 import importlib
 import json
@@ -12,34 +8,34 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal
 
-from django.db.models import Prefetch, QuerySet
+from django.core.exceptions import FieldDoesNotExist
+from django.db.models import Model, Prefetch, QuerySet
 from rest_framework import generics, serializers
-from typesafe_sdk import Choice, ChoiceAnswer, Noul, NoulAnswer, NoulCriteria, TypeSafeClient
+from typesafe_sdk import Choice, ChoiceAnswer, TypeSafeClient
 
-from harness.verdict import SCORE, Verdict, get_most_severe, get_verdict
+from harness.verdict import SCORE, Verdict, get_most_severe
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL = os.environ.get('JEV_MODEL', 'jev-latest')
 USD_PER_INPUT_TOKEN = 0.042 / 1_000_000
 
-QuestionKind = Literal['noul', 'choice']
-
 TRUE_CRITERION = (
     'Serializing a row touches a relation, deferred column or model property that the queryset does not already '
     'load (select_related, prefetch_related, Prefetch, annotate, only), or re-queries a prefetched relation '
-    '(filter, exclude, order_by, aggregate, first), so queries are issued once per row.')
+    '(filter, exclude, order_by, aggregate, first), so queries are issued once per row. Check each read one hop at '
+    'a time: every path in its relations_traversed must appear in loaded_relations, and loading a does not load '
+    'a.b. The same holds for code that loops over a prefetched collection and reads a relation of each item, such '
+    'as b.series for b in obj.books.all(), which needs books.series in loaded_relations. Reading a column listed in '
+    'deferred_columns also queries once per row.')
 MAYBE_CRITERION = (
     'The code does not settle it: something read while serializing a row could be served from what the queryset '
     'loads or could hit the database, and both readings are plausible.')
 FALSE_CRITERION = (
     'Everything read while serializing a row is already in memory from the queryset, so the total number of '
-    'queries stays constant no matter how many rows the endpoint returns.')
-
-CACHE_AWARE_FALSE_CRITERION = FALSE_CRITERION + (
-    ' Reading a prefetched relation through all(), iteration, len(), count(), exists() or slicing is served from the '
-    'prefetch cache, and a nested prefetch lookup such as a__b also caches b for every a.')
+    'queries stays constant no matter how many rows the endpoint returns. Reading a prefetched relation through '
+    'all(), iteration, len(), count(), exists() or slicing is served from the prefetch cache, and a nested prefetch '
+    'lookup such as a__b also caches b for every a.')
 
 
 @dataclass
@@ -56,6 +52,8 @@ class QuerysetFacts:
     annotations: list[str]
     only: list[str]
     defer: list[str]
+    loaded_relations: dict[str, str]
+    deferred_columns: list[str]
 
 
 @dataclass
@@ -63,6 +61,7 @@ class FieldFact:
     key: str
     field_class: str
     reads: str
+    relations_traversed: list[str]
 
 
 @dataclass
@@ -111,30 +110,80 @@ def build_prefetch_fact(lookup: str | Prefetch) -> PrefetchFact:
                         select_related=get_select_related_paths(tree or {}, f'{path}.'))
 
 
+def build_loaded_relations(select_related: list[str], prefetches: list[PrefetchFact]) -> dict[str, str]:
+    """Every relation path the plan keeps in memory, mapped to what loads it. Prefetching a.b also loads a, and a
+    Prefetch with to_attr stores its last hop under the to_attr name instead of the relation's own name."""
+    loaded = dict.fromkeys(select_related, 'select_related')
+    for prefetch in prefetches:
+        *parents, last = prefetch.path.split('.')
+        for i in range(len(parents)):
+            loaded.setdefault('.'.join(parents[:i + 1]), f'prefetch_related, as a step of {prefetch.path}')
+        target = '.'.join([*parents, prefetch.to_attr or last])
+        loaded.setdefault(target, 'prefetch_related, a list under to_attr' if prefetch.to_attr else 'prefetch_related')
+        for path in prefetch.select_related:
+            loaded.setdefault(target + path.removeprefix(prefetch.path),
+                              f'select_related inside the {prefetch.path} Prefetch')
+    return loaded
+
+
+def build_deferred_columns(model: type[Model], select_related: list[str], only: list[str]) -> list[str]:
+    """The columns of the row model and its select_related models that only() leaves out, so reading one costs a
+    query. The primary key and the foreign key behind each select_related join are always loaded."""
+    tables = [('', model), *((f'{path}.', get_relation_hops(model, path)[-1][1]) for path in select_related)]
+    return [prefix + field.name for prefix, table in tables for field in table._meta.concrete_fields
+            if not (field.primary_key or prefix + field.name in only or prefix + field.name in select_related)]
+
+
 def build_queryset_facts(queryset: QuerySet) -> QuerysetFacts:
     """The loading plan of the queryset the view actually serves; dotted paths, read from Django's query object."""
     deferred, is_defer = queryset.query.deferred_loading
     deferred = sorted(name.replace('__', '.') for name in deferred)
+    only = [] if is_defer else deferred
+    select_related = get_select_related_paths(queryset.query.select_related or {})
+    prefetch_related = [build_prefetch_fact(lookup) for lookup in queryset._prefetch_related_lookups]
     return QuerysetFacts(
-        select_related=get_select_related_paths(queryset.query.select_related or {}),
-        prefetch_related=[build_prefetch_fact(lookup) for lookup in queryset._prefetch_related_lookups],
+        select_related=select_related,
+        prefetch_related=prefetch_related,
         annotations=list(queryset.query.annotations),
-        only=[] if is_defer else deferred,
+        only=only,
         defer=deferred if is_defer else [],
+        loaded_relations=build_loaded_relations(select_related, prefetch_related),
+        deferred_columns=(deferred if is_defer
+                          else build_deferred_columns(queryset.model, select_related, only) if only else []),
     )
 
 
-def build_field_facts(serializer: serializers.Serializer, key_prefix: str = '', read_prefix: str = '') -> list[FieldFact]:
-    """Every output key, nested ones included, with the attribute path it reads from each row."""
+def get_relation_hops(model: type[Model], path: str) -> list[tuple[str, type[Model]]]:
+    """Each relation a dotted read path walks through, as (path up to that hop, related model), outermost first. The
+    walk stops at the first step that is a column, property, annotation or method."""
+    hops = []
+    names = path.replace('[]', '').split('.')
+    for i, name in enumerate(names):
+        try:
+            field = model._meta.get_field(name)
+        except FieldDoesNotExist:
+            break
+        if not field.is_relation or name != field.name:  # a column, or a foreign key's own column such as book_id
+            break
+        model = field.related_model
+        hops.append(('.'.join(names[:i + 1]), model))
+    return hops
+
+
+def build_field_facts(model: type[Model], serializer: serializers.Serializer, key_prefix: str = '',
+                      read_prefix: str = '') -> list[FieldFact]:
+    """Every output key, nested ones included, with the attribute path it reads from each row of `model` and the
+    relations that path walks through."""
     facts = []
     for name, field in serializer.fields.items():
         source = f'{field.method_name}(obj)' if isinstance(field, serializers.SerializerMethodField) else field.source
         key, reads = key_prefix + name, read_prefix + source
-        facts.append(FieldFact(key=key, field_class=type(field).__name__, reads=reads))
+        facts.append(FieldFact(key=key, field_class=type(field).__name__, reads=reads,
+                               relations_traversed=[path for path, _ in get_relation_hops(model, reads)]))
         if isinstance(field, serializers.ListSerializer):
-            facts += build_field_facts(field.child, f'{key}[].', f'{reads}[].')
+            facts += build_field_facts(model, field.child, f'{key}[].', f'{reads}[].')
         elif isinstance(field, serializers.Serializer):
-            facts += build_field_facts(field, f'{key}.', f'{reads}.')
+            facts += build_field_facts(model, field, f'{key}.', f'{reads}.')
     return facts
 
 
@@ -142,7 +191,7 @@ def build_resolved_facts(queryset: QuerySet, serializer: serializers.Serializer,
     """The state section holding the served queryset's loading plan and every output key's read path."""
     facts = {
         f'queryset_served (from {view_name}().get_queryset())': asdict(build_queryset_facts(queryset)),
-        'serializer_fields': [asdict(fact) for fact in build_field_facts(serializer)],
+        'serializer_fields': [asdict(fact) for fact in build_field_facts(queryset.model, serializer)],
     }
     return (f'# ===== resolved: loading plan and read paths, computed by the harness from {source} '
             f'(facts, not a verdict) =====\n{json.dumps(facts, indent=2)}')
@@ -154,30 +203,24 @@ def build_resolved_state(case_id: str) -> str:
     return f'{build_state(case_id)}\n\n{facts}'
 
 
-def build_question(kind: QuestionKind, claim: str, question: str, false_criterion: str = FALSE_CRITERION) -> Noul | Choice:
-    """A Noul is asked as a claim to judge; a Choice as a question to answer."""
-    if kind == 'noul':
-        return Noul(instructions=claim, criteria=NoulCriteria(true=TRUE_CRITERION, false=false_criterion))
+def build_question(question: str) -> Choice:
     return Choice(instructions=question, criteria={
         Verdict.TRUE.value: TRUE_CRITERION,
         Verdict.MAYBE.value: MAYBE_CRITERION,
-        Verdict.FALSE.value: false_criterion,
+        Verdict.FALSE.value: FALSE_CRITERION,
     })
 
 
-def get_verdict_probabilities(answer: NoulAnswer | ChoiceAnswer) -> tuple[Verdict, dict[Verdict, float]]:
-    if isinstance(answer, NoulAnswer):
-        return get_verdict(answer.noul), {Verdict.TRUE: answer.noul, Verdict.FALSE: 1 - answer.noul}
-    return Verdict(answer.choice), {Verdict(choice): p for choice, p in answer.probabilities.items()}
-
-
-def ask(client: TypeSafeClient, state: str, questions: dict[str, Noul | Choice]) -> JevResult:
+def ask(client: TypeSafeClient, state: str, questions: dict[str, Choice]) -> JevResult:
     started = time.perf_counter()
     response = client.system_one(state=state, questions=questions, model=MODEL)
     latency_seconds = time.perf_counter() - started
-    verdicts, verdict_probabilities = {}, {}
+    verdicts: dict[str, Verdict] = {}
+    verdict_probabilities: dict[str, dict[Verdict, float]] = {}
     for name in questions:
-        verdicts[name], verdict_probabilities[name] = get_verdict_probabilities(response.answers[name])
+        answer: ChoiceAnswer = response.answers[name]
+        verdicts[name] = Verdict(answer.choice)
+        verdict_probabilities[name] = {Verdict(choice): p for choice, p in answer.probabilities.items()}
     probabilities = {name: sum(SCORE[v] * p for v, p in choices.items())
                      for name, choices in verdict_probabilities.items()}
     return JevResult(
@@ -191,59 +234,23 @@ def ask(client: TypeSafeClient, state: str, questions: dict[str, Noul | Choice])
     )
 
 
-def check_whole(client: TypeSafeClient, case_id: str, kind: QuestionKind) -> JevResult:
-    question = build_question(
-        kind,
-        claim=('Serving the `View` list endpoint in endpoint.py executes extra database queries for every row it '
-               'returns, so the total query count grows with the number of rows (an N+1 query problem).'),
-        question=('Does serving the `View` list endpoint in endpoint.py execute extra database queries for every row '
-                  'it returns, so the total query count grows with the number of rows (an N+1 query problem)?'),
-    )
-    return ask(client, build_state(case_id), {'n_plus_one': question})
-
-
-def build_field_questions(view_name: str, serializer: serializers.Serializer, kind: QuestionKind,
-                          false_criterion: str) -> dict[str, Noul | Choice]:
+def build_resolved_questions(view_name: str, serializer: serializers.Serializer) -> dict[str, Choice]:
+    """One question per top-level field, plus one for the keys a `to_representation` override adds, which no declared
+    field covers."""
     serializer_name = type(serializer).__name__
-    return {
+    questions = {
         name: build_question(
-            kind,
-            claim=(f'Producing the `{name}` field of `{serializer_name}` for each row returned by `{view_name}` '
-                   f'executes at least one extra database query per row, given the queryset that '
-                   f'`{view_name}.get_queryset` builds.'),
-            question=(f'Does producing the `{name}` field of `{serializer_name}` for each row returned by '
-                      f'`{view_name}` execute at least one extra database query per row, given the queryset that '
-                      f'`{view_name}.get_queryset` builds?'),
-            false_criterion=false_criterion,
-        )
+            f'Does producing the `{name}` field of `{serializer_name}` for each row returned by `{view_name}` execute '
+            f'at least one extra database query per row, given the queryset that `{view_name}.get_queryset` builds?')
         for name in serializer.fields
     }
-
-
-def build_resolved_questions(view_name: str, serializer: serializers.Serializer,
-                             kind: QuestionKind) -> dict[str, Noul | Choice]:
-    """One question per top-level field, with the prefetch-cache rule in the false criterion, plus one for the keys a
-    `to_representation` override adds, which no declared field covers."""
-    questions = build_field_questions(view_name, serializer, kind, CACHE_AWARE_FALSE_CRITERION)
-    serializer_name = type(serializer).__name__
     if 'to_representation' in vars(type(serializer)):
         questions['to_representation'] = build_question(
-            kind,
-            claim=(f'The keys that `{serializer_name}.to_representation` adds beyond the declared fields '
-                   f'execute at least one extra database query per row returned by `{view_name}`.'),
-            question=(f'Do the keys that `{serializer_name}.to_representation` adds beyond the declared '
-                      f'fields execute at least one extra database query per row returned by `{view_name}`?'),
-            false_criterion=CACHE_AWARE_FALSE_CRITERION,
-        )
+            f'Do the keys that `{serializer_name}.to_representation` adds beyond the declared fields execute at least '
+            f'one extra database query per row returned by `{view_name}`?')
     return questions
 
 
-def check_fields(client: TypeSafeClient, case_id: str, kind: QuestionKind) -> JevResult:
-    questions = build_field_questions('View', get_view_class(case_id).serializer_class(), kind, FALSE_CRITERION)
-    return ask(client, build_state(case_id), questions)
-
-
-def check_resolved(client: TypeSafeClient, case_id: str, kind: QuestionKind) -> JevResult:
-    """Fields, plus the worked-out loading plan in the state (see build_resolved_questions for the questions)."""
-    questions = build_resolved_questions('View', get_view_class(case_id).serializer_class(), kind)
-    return ask(client, build_resolved_state(case_id), questions)
+def check_resolved(client: TypeSafeClient, case_id: str) -> JevResult:
+    return ask(client, build_resolved_state(case_id),
+               build_resolved_questions('View', get_view_class(case_id).serializer_class()))
